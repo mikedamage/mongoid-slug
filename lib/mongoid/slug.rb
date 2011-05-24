@@ -1,6 +1,6 @@
-require 'stringex'
+require 'slug/builder'
 
-module Mongoid #:nodoc:
+module Mongoid
 
   # The slug module helps you generate a URL slug or permalink based on one or
   # more fields in a Mongoid model.
@@ -17,7 +17,7 @@ module Mongoid #:nodoc:
     extend ActiveSupport::Concern
 
     included do
-      cattr_accessor :slug_builder, :slugged_fields, :slug_name, :slug_scope
+      cattr_accessor :slug_builder
     end
 
     module ClassMethods
@@ -60,18 +60,18 @@ module Mongoid #:nodoc:
       #
       def slug(*fields, &block)
         options = fields.extract_options!
-        self.slug_scope = options[:scope]
-        self.slug_name = options[:as] || :slug
-        self.slugged_fields = fields.map(&:to_s)
 
-        self.slug_builder =
-          if block_given?
-            block
-          else
-            lambda do |doc|
-              slugged_fields.map { |f| doc.read_attribute(f) }.join(',')
+        self.slug_builder = Builder.new(self).tap do |b|
+          b.scope = options[:scope]
+          b.name = options[:as] || :slug
+          b.fields = fields.map(&:to_s)
+          b.rule =
+            if block_given?
+              block
+            else
+              lambda { |doc| fields.map { |f| doc.read_attribute(f) }.join }
             end
-          end
+        end
 
         field slug_name
 
@@ -94,7 +94,8 @@ module Mongoid #:nodoc:
           end
 
           def self.find_by_#{slug_name}!(slug)
-            where(slug_name => slug).first || raise(Mongoid::Errors::DocumentNotFound.new(self.class, slug))
+            where(slug_name => slug).first ||
+              raise(Mongoid::Errors::DocumentNotFound.new(self.class, slug))
           end
         CODE
       end
@@ -110,71 +111,21 @@ module Mongoid #:nodoc:
 
     # Returns the slug.
     def to_param
-      read_attribute(slug_name)
+      read_attribute(slug_builder.name)
     end
 
     private
 
-    def find_unique_slug
-      slug = slug_builder.call(self).to_url
-            
-      # Regular expression that matches slug, slug-1, slug-2, ... slug-n
-      # If slug_name field was indexed, MongoDB will utilize that index to
-      # match /^.../ pattern
-      pattern = /^#{Regexp.escape(slug)}(?:-(\d+))?$/
-      
-      existing_slugs = uniqueness_scope.only(slug_name).where(slug_name => pattern, :_id.ne => _id).map{|obj| obj.try(:read_attribute, slug_name)}    
-      
-      if existing_slugs.count > 0      
-        # sort the existing_slugs in increasing order by comparing the suffix numbers:
-        # slug, slug-1, slug-2, ..., slug-n
-        existing_slugs = existing_slugs.sort{|a, b| (pattern.match(a)[1] || -1).to_i <=> (pattern.match(b)[1] || -1).to_i}
-        max_counter = existing_slugs.last.match(/-(\d+)$/).try(:[], 1).to_i
-
-        # Use max_counter + 1 as unique counter
-        slug += "-#{max_counter + 1}"
-      end
-      
-      slug
-    end
-
     def generate_slug
-      if new_record? || slugged_fields_changed?
-        generate_slug!
-      end
+      generate_slug! if new_record? || slugged_fields_changed?
     end
 
     def generate_slug!
-      write_attribute(slug_name, find_unique_slug)
+      write_attribute(slug_name, slug_builder.build)
     end
 
     def slugged_fields_changed?
-      slugged_fields.any? { |f| attribute_changed?(f) }
-    end
-
-    def uniqueness_scope
-      if slug_scope
-        metadata = self.class.reflect_on_association(slug_scope)
-        parent = self.send(metadata.name)
-
-        # Make sure doc is actually associated with something, and that some
-        # referenced docs have been persisted to the parent
-        #
-        # TODO: we need better reflection for reference associations, like
-        # association_name instead of forcing collection_name here -- maybe
-        # in the forthcoming Mongoid refactorings?
-        inverse = metadata.inverse_of || collection_name
-        parent.respond_to?(inverse) ? parent.send(inverse) : self.class
-      elsif embedded?
-        parent_metadata = reflect_on_all_associations(:embedded_in).first
-        _parent.send(parent_metadata.inverse_of || self.metadata.name)
-      else
-        appropriate_class = self.class
-        while (appropriate_class.superclass.include?(Mongoid::Document))
-          appropriate_class = appropriate_class.superclass
-        end
-        appropriate_class
-      end
+      slug_builder.fields.any? { |f| attribute_changed?(f) }
     end
   end
 end
