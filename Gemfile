@@ -1,5 +1,5 @@
 source :rubygems
 gemspec
 
-gem 'database_cleaner', '~> 0.6.0'
-gem 'rspec', '~> 2.5.0'
+gem 'ruby-debug',   :platform => :mri_18, :require => 'ruby-debug'
+gem 'ruby-debug19', :platform => :mri_19, :require => 'ruby-debug'
