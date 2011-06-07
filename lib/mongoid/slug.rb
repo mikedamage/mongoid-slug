@@ -40,7 +40,10 @@ module Mongoid #:nodoc:
       # * `:index`, which specifies whether an index should be defined for the
       # slug. Defaults to `false` and has no effect if the document is em-
       # bedded.
-      #
+			# 
+			# * `:length`, which specifies the maximum length the slug can have. Slugs
+			# longer than this are truncated and duplicate slugs have a number appended.
+			# 
       # Alternatively, this method can be given a block to build a custom slug
       # out of the specified fields.
       #
@@ -59,9 +62,9 @@ module Mongoid #:nodoc:
       #      end
       #
       def slug(*fields, &block)
-        options = fields.extract_options!
-        self.slug_scope = options[:scope]
-        self.slug_name = options[:as] || :slug
+        options             = fields.extract_options!
+        self.slug_scope     = options[:scope]
+        self.slug_name      = options[:as] || :slug
         self.slugged_fields = fields.map(&:to_s)
 
         self.slug_builder =
@@ -96,6 +99,14 @@ module Mongoid #:nodoc:
           def self.find_by_#{slug_name}!(slug)
             where(slug_name => slug).first || raise(Mongoid::Errors::DocumentNotFound.new(self.class, slug))
           end
+
+					def self.find_by_#{slug_name}_or_id(slug)
+						any_of({slug_name => slug}, {'_id' => slug}).first
+					end
+
+					def self.find_by_#{slug_name}_or_id!(slug)
+						any_of({slug_name => slug}, {'_id' => slug}).first || raise(Mongoid::Errors::DocumentNotFound.new(self.class, slug))
+					end
         CODE
       end
     end
